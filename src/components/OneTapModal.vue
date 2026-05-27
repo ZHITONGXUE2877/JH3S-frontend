@@ -358,10 +358,10 @@ function resetAndClose() {
   position: fixed; inset: 0;
   background: rgba(0,0,0,.6);
   z-index: 100;
-  display: flex; align-items: flex-end;
+  display: flex; align-items: flex-end; justify-content: center;
 }
 .sheet {
-  width: 100%; max-height: 92vh;
+  width: 100%; max-width: 480px; max-height: 92vh;
   background: #18181f;
   border-radius: 20px 20px 0 0;
   padding: 14px 18px 40px;
