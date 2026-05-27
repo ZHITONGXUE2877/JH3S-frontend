@@ -6,12 +6,6 @@ const route  = useRoute()
 
 <template>
   <nav class="app-nav">
-    <!-- 桌面端顶部 Logo -->
-    <div class="nav-logo">
-      <span class="logo-icon">🎬</span>
-      <span class="logo-text">JH3S</span>
-    </div>
-
     <button :class="['nav-item', { active: route.path === '/' }]" @click="router.push('/')">
       <span class="nav-icon">🔥</span>
       <span class="nav-label">发现</span>
@@ -47,7 +41,6 @@ const route  = useRoute()
   padding-bottom: env(safe-area-inset-bottom, 0px);
   z-index: 50;
 }
-.nav-logo { display: none; }
 
 .nav-item {
   flex: 1; background: none; border: none;
@@ -89,14 +82,6 @@ const route  = useRoute()
     border-top: none;
     border-right: 1px solid rgba(255,255,255,.08);
   }
-  .nav-logo {
-    display: flex; flex-direction: column; align-items: center;
-    padding: 22px 0 18px; margin-bottom: 6px;
-    border-bottom: 1px solid rgba(255,255,255,.06);
-    width: 100%;
-  }
-  .logo-icon { font-size: 26px; }
-  .logo-text  { font-size: 9px; color: rgba(255,255,255,.35); margin-top: 3px; letter-spacing: 1px; }
   .nav-item {
     flex: none; width: 100%; padding: 12px 0;
     border-radius: 0;

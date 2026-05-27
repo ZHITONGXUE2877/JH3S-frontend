@@ -202,11 +202,7 @@ function openModal(v) { modalVideo.value = v; modalVisible.value = true }
 
     </div>
 
-    <!-- ── 静音 & 进度（固定在屏幕，不随 strip 动）── -->
-    <button class="mute-btn" @click="muted = !muted">
-      {{ muted ? '🔇' : '🔊' }}
-    </button>
-
+    <!-- ── 进度条（固定在屏幕，不随 strip 动）── -->
     <div class="progress-bar">
       <div class="progress-fill" :style="{ width: progress + '%' }"/>
     </div>
