@@ -1,18 +1,17 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const props = defineProps({ video: Object, visible: Boolean })
 const emit  = defineEmits(['close'])
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
-// ── 状态机 ────────────────────────────────────────────────
-// upload → stg1_loading → confirm → select_style → stg2_loading → done → error
+// ── 状态机：upload → loading → done → error ──────────────
 const uiStage  = ref('upload')
 const taskId   = ref(null)
 const errorMsg = ref('')
 
-// ── 上传 ──────────────────────────────────────────────────
+// ── 文件上传 ──────────────────────────────────────────────
 const fileInput = ref(null)
 const previews  = ref([])
 const fileList  = ref([])
@@ -37,53 +36,99 @@ function removeImg(i) {
   fileList.value.splice(i, 1)
 }
 
+// ── 风格选择（在上传阶段完成）────────────────────────────
+const styles          = ref([])
+const selectedStyleId = ref('')
+
+async function loadStyles() {
+  try {
+    const cat = props.video?.category || ''
+    let data = []
+    if (cat) {
+      const r = await fetch(`${API_BASE}/v1/styles?category=${cat}`)
+      data = await r.json()
+    }
+    if (!data.length) {
+      const r = await fetch(`${API_BASE}/v1/styles`)
+      data = await r.json()
+    }
+    styles.value = data
+    if (data.length) selectedStyleId.value = data[0].id
+  } catch {
+    selectedStyleId.value = 'tmpl_001'
+  }
+}
+
+watch(() => props.visible, (v) => { if (v && !styles.value.length) loadStyles() })
+
 // ── 进度轮询 ──────────────────────────────────────────────
-const progress = ref(0)
-let   pollTimer = null
+const progress   = ref(0)
+const backStatus = ref('')   // 后端 task.status
+let   pollTimer  = null
 
 function stopPoll() { clearInterval(pollTimer); pollTimer = null }
 
-const progressTxt = computed(() => {
-  if (uiStage.value === 'stg1_loading') return 'AI 正在生成产品三视图...'
-  if (uiStage.value === 'stg2_loading')
-    return progress.value < 50 ? '场景图生成中...' : '视频渲染中...'
-  return ''
+// 三步推断
+const step1 = computed(() => {
+  if (['PROCESSING_STG2','AWAITING_CONFIRM','COMPLETED'].includes(backStatus.value)) return 'done'
+  if (backStatus.value === 'PROCESSING_STG1') return 'active'
+  return 'wait'
 })
+const step2 = computed(() => {
+  if (backStatus.value === 'COMPLETED') return 'done'
+  if (backStatus.value === 'PROCESSING_STG2' && progress.value >= 50) return 'done'
+  if (backStatus.value === 'PROCESSING_STG2') return 'active'
+  return 'wait'
+})
+const step3 = computed(() => {
+  if (backStatus.value === 'COMPLETED') return 'done'
+  if (backStatus.value === 'PROCESSING_STG2' && progress.value >= 50) return 'active'
+  return 'wait'
+})
+
+const loadingTitle = computed(() => {
+  if (step3.value === 'active') return '视频渲染中...'
+  if (step2.value === 'active') return '合成爆款场景图...'
+  return 'AI 生成三视图中...'
+})
+
+const accentColor = computed(() => {
+  if (step3.value === 'active') return '#FE2C55'
+  if (step2.value === 'active') return '#8b5cf6'
+  return '#7ECFFF'
+})
+
+const resultVideoUrl = ref('')
 
 async function pollStatus() {
   if (!taskId.value) return
   try {
     const r    = await fetch(`${API_BASE}/v1/task/status/${taskId.value}`)
     const data = await r.json()
-    progress.value = data.progress ?? 0
-
-    if (data.status === 'AWAITING_CONFIRM') {
-      stopPoll()
-      viewUrls.value      = data.view_image_urls || []
-      selectedViews.value = viewUrls.value.length ? [viewUrls.value[0]] : []
-      uiStage.value = 'confirm'
-    }
+    progress.value   = data.progress ?? 0
+    backStatus.value = data.status
     if (data.status === 'COMPLETED') {
       stopPoll()
       resultVideoUrl.value = data.video_url
       uiStage.value = 'done'
-    }
-    if (data.status === 'FAILED') {
+    } else if (data.status === 'FAILED') {
       stopPoll()
       errorMsg.value = data.error || '生成失败，请重试'
-      uiStage.value = 'error'
+      uiStage.value  = 'error'
     }
-  } catch { /* 网络波动继续轮询 */ }
+    // AWAITING_CONFIRM = no style found, keep polling — backend may auto-continue
+  } catch { /* 网络波动，继续轮询 */ }
 }
 
-// ── Stage1：上传 → 三视图 ─────────────────────────────────
-async function startStage1() {
+// ── 开始生成 ──────────────────────────────────────────────
+async function startGeneration() {
   if (!fileList.value.length) return
-  uiStage.value  = 'stg1_loading'
-  progress.value = 0
+  uiStage.value    = 'loading'
+  progress.value   = 0
+  backStatus.value = 'PROCESSING_STG1'
 
   const form = new FormData()
-  form.append('style_id', props.video?.id?.toString() ?? 'tmpl_001')
+  form.append('style_id', selectedStyleId.value || 'tmpl_001')
   form.append('category', props.video?.category ?? 'clothing')
   fileList.value.forEach(f => form.append('images', f))
 
@@ -97,70 +142,46 @@ async function startStage1() {
     }
     const data = await r.json()
     if (!data.task_id) {
-      errorMsg.value = '服务器返回数据异常，请重试'
+      errorMsg.value = '服务器返回异常，请重试'
       uiStage.value  = 'error'
       return
     }
     taskId.value = data.task_id
     pollTimer = setInterval(pollStatus, 2000)
-  } catch (e) {
-    errorMsg.value = '网络连接失败，请检查网络或稍后重试'
+  } catch {
+    errorMsg.value = '网络连接失败，请检查网络后重试'
     uiStage.value  = 'error'
   }
 }
 
-// ── 三视图确认 ────────────────────────────────────────────
-const viewUrls      = ref([])
-const selectedViews = ref([])
+// ── 反馈 ──────────────────────────────────────────────────
+const feedbackDone   = ref(false)
+const feedbackRating = ref('')
+const showReasons    = ref(false)
 
-function toggleView(url) {
-  const idx = selectedViews.value.indexOf(url)
-  if (idx === -1) selectedViews.value.push(url)
-  else            selectedViews.value.splice(idx, 1)
-}
+const REASONS = [
+  { id: 'quality',   label: '画质问题' },
+  { id: 'distorted', label: '变形走样' },
+  { id: 'style',     label: '风格不符' },
+  { id: 'other',     label: '其他' },
+]
 
-async function goToStyleSelect() {
-  uiStage.value = 'select_style'
-  await loadStyles()
-}
-
-// ── 风格模板选择 ──────────────────────────────────────────
-const styles          = ref([])
-const selectedStyleId = ref('')
-
-async function loadStyles() {
-  try {
-    const r = await fetch(`${API_BASE}/v1/styles`)
-    styles.value = await r.json()
-    if (styles.value.length) selectedStyleId.value = styles.value[0].id
-  } catch {
-    selectedStyleId.value = props.video?.id?.toString() ?? 'tmpl_001'
+async function submitFeedback(rating, reason = '') {
+  if (rating === 'bad' && !reason) {
+    feedbackRating.value = 'bad'
+    showReasons.value    = true
+    return
   }
-}
-
-// ── Stage2：场景图 + 视频 ─────────────────────────────────
-const resultVideoUrl = ref('')
-
-async function startStage2() {
-  if (!selectedViews.value.length || !selectedStyleId.value) return
-  uiStage.value  = 'stg2_loading'
-  progress.value = 0
-
+  showReasons.value = false
   try {
-    await fetch(`${API_BASE}/v1/task/generate_video`, {
+    await fetch(`${API_BASE}/v1/feedback`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        task_id:              taskId.value,
-        confirmed_image_urls: selectedViews.value,
-        style_id:             selectedStyleId.value,
-      }),
+      body:    JSON.stringify({ task_id: taskId.value, rating, reason, comment: '' }),
     })
-    pollTimer = setInterval(pollStatus, 3000)
-  } catch {
-    errorMsg.value = '网络错误'
-    uiStage.value  = 'error'
-  }
+  } catch {}
+  feedbackDone.value   = true
+  feedbackRating.value = rating
 }
 
 // ── 重置关闭 ──────────────────────────────────────────────
@@ -169,14 +190,14 @@ function resetAndClose() {
   uiStage.value        = 'upload'
   previews.value       = []
   fileList.value       = []
-  viewUrls.value       = []
-  selectedViews.value  = []
-  styles.value         = []
-  selectedStyleId.value= ''
   resultVideoUrl.value = ''
   progress.value       = 0
   taskId.value         = null
   errorMsg.value       = ''
+  backStatus.value     = ''
+  feedbackDone.value   = false
+  feedbackRating.value = ''
+  showReasons.value    = false
   emit('close')
 }
 </script>
@@ -187,10 +208,10 @@ function resetAndClose() {
       <div class="sheet">
         <div class="drag-bar"></div>
 
-        <!-- ══ 阶段1：上传产品图 ══ -->
+        <!-- ══ 上传阶段 ══ -->
         <template v-if="uiStage === 'upload'">
           <div class="sheet-header">
-            <h3>✨ 一键做同款</h3>
+            <h3>一键做同款</h3>
             <button class="close-btn" @click="resetAndClose">✕</button>
           </div>
 
@@ -205,7 +226,7 @@ function resetAndClose() {
             </div>
           </div>
 
-          <div class="section-title">上传你的产品图（1-9张）</div>
+          <div class="section-title">上传产品图（1-9张）</div>
 
           <div class="img-grid">
             <div v-for="(src, i) in previews" :key="i" class="img-thumb">
@@ -220,133 +241,115 @@ function resetAndClose() {
           <input ref="fileInput" type="file" accept="image/*" multiple
             style="display:none" @change="onFilePick" />
 
-          <div class="tip">📌 建议上传正面、侧面、细节图，AI 会自动生成标准三视图</div>
+          <!-- 视频风格 -->
+          <template v-if="styles.length">
+            <div class="section-title">视频风格</div>
+            <div class="style-scroll">
+              <div
+                v-for="s in styles" :key="s.id"
+                :class="['style-chip', { active: selectedStyleId === s.id }]"
+                @click="selectedStyleId = s.id"
+              >
+                {{ s.name }}
+              </div>
+            </div>
+          </template>
 
-          <button class="generate-btn" :disabled="!previews.length" @click="startStage1">
-            🚀 开始生成三视图
+          <div class="tip">建议上传正面、侧面、细节图，AI 自动生成爆款视频</div>
+
+          <button class="generate-btn" :disabled="!previews.length" @click="startGeneration">
+            开始生成
           </button>
         </template>
 
-        <!-- ══ Stage1 加载中 ══ -->
-        <template v-else-if="uiStage === 'stg1_loading'">
+        <!-- ══ 生成中 ══ -->
+        <template v-else-if="uiStage === 'loading'">
           <div class="loading-view">
-            <div class="spinner stg1"></div>
-            <p class="loading-title">{{ progressTxt }}</p>
+            <div class="spinner" :style="{ borderTopColor: accentColor }"></div>
+            <p class="loading-title">{{ loadingTitle }}</p>
             <div class="progress-wrap">
               <div class="progress-track">
-                <div class="progress-bar-fill stg1" :style="{ width: progress + '%' }"></div>
+                <div class="progress-fill"
+                  :style="{ width: progress + '%', background: accentColor }"></div>
               </div>
               <span class="progress-num">{{ progress }}%</span>
             </div>
-            <p class="loading-sub">Seedream V4 分析产品角度，生成标准化三视图</p>
-            <div class="status-steps">
-              <span class="step done">✅ 图片上传</span>
-              <span class="step active">⏳ 三视图生成</span>
-              <span class="step">○ 选风格</span>
-              <span class="step">○ 视频渲染</span>
-            </div>
-          </div>
-        </template>
 
-        <!-- ══ 确认三视图 ══ -->
-        <template v-else-if="uiStage === 'confirm'">
-          <div class="sheet-header">
-            <h3>✅ 确认三视图</h3>
-            <button class="close-btn" @click="resetAndClose">✕</button>
-          </div>
-          <p class="confirm-tip">点击图片可取消选择，至少保留一张</p>
-
-          <div class="view-grid">
-            <div
-              v-for="(url, i) in viewUrls" :key="i"
-              :class="['view-item', { selected: selectedViews.includes(url) }]"
-              @click="toggleView(url)"
-            >
-              <img :src="url" />
-              <span v-if="selectedViews.includes(url)" class="view-check">✓</span>
-              <span class="view-label">{{ ['正面','侧面','背面','细节'][i] || '视图'+(i+1) }}</span>
-            </div>
-          </div>
-
-          <div class="confirm-actions">
-            <button class="btn-secondary" @click="uiStage = 'upload'">重新上传</button>
-            <button class="btn-primary" :disabled="!selectedViews.length" @click="goToStyleSelect">
-              下一步：选风格 →
-            </button>
-          </div>
-        </template>
-
-        <!-- ══ 选择风格模板 ══ -->
-        <template v-else-if="uiStage === 'select_style'">
-          <div class="sheet-header">
-            <h3>🎨 选择视频风格</h3>
-            <button class="close-btn" @click="resetAndClose">✕</button>
-          </div>
-          <p class="confirm-tip">选一个你喜欢的场景风格，AI 会把你的产品融入其中</p>
-
-          <div v-if="!styles.length" class="style-loading">加载中...</div>
-          <div v-else class="style-list">
-            <div
-              v-for="s in styles" :key="s.id"
-              :class="['style-card', { selected: selectedStyleId === s.id }]"
-              @click="selectedStyleId = s.id"
-            >
-              <video :src="s.preview_url" class="style-preview"
-                muted autoplay loop playsinline />
-              <div class="style-info">
-                <span class="style-name">{{ s.name }}</span>
-                <span class="style-cat">{{ s.category }}</span>
+            <div class="step-track">
+              <div :class="['step-item', step1]">
+                <div class="step-dot">
+                  <span v-if="step1==='done'">✓</span>
+                  <span v-else-if="step1==='active'" class="dot-pulse">●</span>
+                  <span v-else style="opacity:.3">○</span>
+                </div>
+                <span class="step-lbl">三视图</span>
               </div>
-              <div v-if="selectedStyleId === s.id" class="style-check">✓</div>
-            </div>
-          </div>
-
-          <div class="confirm-actions">
-            <button class="btn-secondary" @click="uiStage = 'confirm'">← 返回</button>
-            <button class="btn-primary" :disabled="!selectedStyleId" @click="startStage2">
-              开始渲染视频 🚀
-            </button>
-          </div>
-        </template>
-
-        <!-- ══ Stage2 渲染中 ══ -->
-        <template v-else-if="uiStage === 'stg2_loading'">
-          <div class="loading-view">
-            <div class="spinner stg2"></div>
-            <p class="loading-title">{{ progressTxt }}</p>
-            <div class="progress-wrap">
-              <div class="progress-track">
-                <div class="progress-bar-fill stg2" :style="{ width: progress + '%' }"></div>
+              <div class="step-line"></div>
+              <div :class="['step-item', step2]">
+                <div class="step-dot">
+                  <span v-if="step2==='done'">✓</span>
+                  <span v-else-if="step2==='active'" class="dot-pulse">●</span>
+                  <span v-else style="opacity:.3">○</span>
+                </div>
+                <span class="step-lbl">场景图</span>
               </div>
-              <span class="progress-num">{{ progress }}%</span>
+              <div class="step-line"></div>
+              <div :class="['step-item', step3]">
+                <div class="step-dot">
+                  <span v-if="step3==='done'">✓</span>
+                  <span v-else-if="step3==='active'" class="dot-pulse">●</span>
+                  <span v-else style="opacity:.3">○</span>
+                </div>
+                <span class="step-lbl">视频渲染</span>
+              </div>
             </div>
-            <p class="loading-sub">
-              {{ progress < 50 ? 'Seedream V4 生成场景图...' : 'Kling 2.1 图生视频中，预计 1-3 分钟' }}
-            </p>
-            <div class="status-steps">
-              <span class="step done">✅ 图片上传</span>
-              <span class="step done">✅ 三视图确认</span>
-              <span class="step done">✅ 风格选择</span>
-              <span class="step active">⏳ 视频渲染</span>
-            </div>
+
+            <p class="loading-hint">全程自动生成，无需等待确认，通常 3-5 分钟</p>
           </div>
         </template>
 
         <!-- ══ 完成 ══ -->
         <template v-else-if="uiStage === 'done'">
-          <div class="done-view">
-            <div class="done-icon">🎉</div>
-            <h3>视频生成完成！</h3>
-            <video v-if="resultVideoUrl" :src="resultVideoUrl"
-              class="result-video" controls autoplay muted loop playsinline />
-            <div v-else class="result-placeholder">视频生成完毕</div>
-            <div class="done-actions">
-              <button class="btn-secondary" @click="resetAndClose">返回浏览</button>
-              <a v-if="resultVideoUrl" :href="resultVideoUrl" download class="btn-primary">
-                ⬇️ 下载视频
-              </a>
-              <button class="btn-primary qianchuan">🚀 直接投千川</button>
+          <div class="sheet-header">
+            <h3>视频已生成</h3>
+            <button class="close-btn" @click="resetAndClose">✕</button>
+          </div>
+
+          <video v-if="resultVideoUrl" :src="resultVideoUrl"
+            class="result-video" controls autoplay muted loop playsinline />
+          <div v-else class="result-placeholder">视频生成完毕</div>
+
+          <!-- 反馈 -->
+          <div class="feedback-box">
+            <template v-if="!feedbackDone">
+              <p class="fb-title">效果满意吗？</p>
+              <template v-if="!showReasons">
+                <div class="fb-row">
+                  <button class="fb-btn good" @click="submitFeedback('good')">满意</button>
+                  <button class="fb-btn bad"  @click="submitFeedback('bad')">不满意</button>
+                </div>
+              </template>
+              <template v-else>
+                <p class="fb-sub">哪里不满意？</p>
+                <div class="fb-reasons">
+                  <button v-for="r in REASONS" :key="r.id"
+                    class="reason-btn" @click="submitFeedback('bad', r.id)">
+                    {{ r.label }}
+                  </button>
+                </div>
+              </template>
+            </template>
+            <div v-else class="fb-done">
+              {{ feedbackRating === 'good' ? '感谢好评！' : '已记录，我们会持续优化' }}
             </div>
+          </div>
+
+          <div class="done-actions">
+            <button class="btn-secondary" @click="resetAndClose">返回浏览</button>
+            <a v-if="resultVideoUrl" :href="resultVideoUrl" download class="btn-primary">
+              下载视频
+            </a>
+            <button class="btn-primary qianchuan">投千川</button>
           </div>
         </template>
 
@@ -367,7 +370,7 @@ function resetAndClose() {
 <style scoped>
 .overlay {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,.6);
+  background: rgba(0,0,0,.65);
   z-index: 100;
   display: flex; align-items: flex-end; justify-content: center;
 }
@@ -375,7 +378,7 @@ function resetAndClose() {
   width: 100%; max-width: 480px; max-height: 92vh;
   background: #18181f;
   border-radius: 20px 20px 0 0;
-  padding: 14px 18px 40px;
+  padding: 14px 18px 44px;
   overflow-y: auto;
   display: flex; flex-direction: column; gap: 14px;
 }
@@ -395,7 +398,7 @@ function resetAndClose() {
   cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
 
-/* Source card */
+/* 参考视频卡片 */
 .source-card {
   display: flex; gap: 12px;
   background: rgba(255,255,255,.06); border-radius: 12px; padding: 10px;
@@ -404,9 +407,7 @@ function resetAndClose() {
   width: 52px; height: 68px; border-radius: 8px; flex-shrink: 0;
   position: relative; overflow: hidden; background: #222;
 }
-.thumb-video {
-  width: 100%; height: 100%; object-fit: cover;
-}
+.thumb-video { width: 100%; height: 100%; object-fit: cover; }
 .duration-tag {
   position: absolute; bottom: 4px; right: 4px;
   background: rgba(0,0,0,.6); color: #fff;
@@ -419,15 +420,14 @@ function resetAndClose() {
   display: -webkit-box; -webkit-box-orient: vertical;
   -webkit-line-clamp: 2; overflow: hidden;
 }
+
 .section-title {
   font-size: 12px; font-weight: 700;
   color: rgba(255,255,255,.45); letter-spacing: 0.5px;
 }
 
 /* 图片网格 */
-.img-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
-}
+.img-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .img-thumb {
   aspect-ratio: 3/4; border-radius: 10px;
   overflow: hidden; position: relative; background: #222;
@@ -452,6 +452,29 @@ function resetAndClose() {
 .img-add span:first-child { font-size: 28px; line-height: 1; }
 .img-add-sub { font-size: 11px; }
 
+/* 风格选择横滚 */
+.style-scroll {
+  display: flex; gap: 8px; overflow-x: auto;
+  padding-bottom: 4px; -webkit-overflow-scrolling: touch;
+}
+.style-scroll::-webkit-scrollbar { display: none; }
+.style-chip {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border-radius: 20px;
+  font-size: 13px; font-weight: 600;
+  color: rgba(255,255,255,.5);
+  background: rgba(255,255,255,.07);
+  border: 1.5px solid transparent;
+  cursor: pointer; transition: all .15s;
+  white-space: nowrap;
+}
+.style-chip.active {
+  color: #FE2C55;
+  background: rgba(254,44,85,.1);
+  border-color: rgba(254,44,85,.4);
+}
+
 .tip {
   font-size: 12px; color: rgba(255,255,255,.4);
   background: rgba(255,255,255,.05);
@@ -473,18 +496,16 @@ function resetAndClose() {
 /* 加载视图 */
 .loading-view {
   display: flex; flex-direction: column;
-  align-items: center; gap: 14px; padding: 24px 0;
+  align-items: center; gap: 16px; padding: 28px 0;
 }
 .spinner {
   width: 52px; height: 52px; border-radius: 50%;
   border: 4px solid rgba(255,255,255,.1);
-  animation: spin .9s linear infinite;
+  animation: spin .85s linear infinite;
+  transition: border-top-color .4s;
 }
-.spinner.stg1 { border-top-color: #7ECFFF; }
-.spinner.stg2 { border-top-color: #FE2C55; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-title { font-size: 16px; font-weight: 700; color: #fff; }
-.loading-sub   { font-size: 12px; color: rgba(255,255,255,.45); text-align: center; }
 
 .progress-wrap {
   width: 100%; display: flex; align-items: center; gap: 10px;
@@ -493,101 +514,91 @@ function resetAndClose() {
   flex: 1; height: 6px; background: rgba(255,255,255,.1);
   border-radius: 3px; overflow: hidden;
 }
-.progress-bar-fill {
-  height: 100%; border-radius: 3px; transition: width .4s ease;
+.progress-fill {
+  height: 100%; border-radius: 3px;
+  transition: width .4s ease, background .4s;
 }
-.progress-bar-fill.stg1 { background: #7ECFFF; }
-.progress-bar-fill.stg2 { background: linear-gradient(90deg, #FE2C55, #FF6B35); }
 .progress-num {
   font-size: 13px; font-weight: 700; color: #fff; min-width: 36px; text-align: right;
 }
 
-.status-steps {
-  display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+/* 步骤指示 */
+.step-track {
+  display: flex; align-items: center; gap: 0; width: 100%;
 }
-.step       { font-size: 11px; color: rgba(255,255,255,.3); }
-.step.done  { color: #4ade80; }
-.step.active{ color: #FE2C55; font-weight: 700; }
-
-/* 三视图确认 */
-.confirm-tip { font-size: 12px; color: rgba(255,255,255,.5); }
-.view-grid   { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.view-item {
-  aspect-ratio: 4/5; border-radius: 10px; overflow: hidden;
-  position: relative; cursor: pointer;
-  border: 2px solid transparent; transition: border-color .15s;
+.step-item {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  flex-shrink: 0;
 }
-.view-item.selected { border-color: #FE2C55; }
-.view-item img { width: 100%; height: 100%; object-fit: cover; }
-.view-check {
-  position: absolute; top: 6px; right: 6px;
-  background: #FE2C55; color: #fff;
-  width: 20px; height: 20px; border-radius: 50%;
+.step-dot {
+  font-size: 18px; width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 700;
 }
-.view-label {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  background: rgba(0,0,0,.6); color: #fff;
-  font-size: 11px; text-align: center; padding: 4px;
+.step-item.done  .step-dot { color: #4ade80; }
+.step-item.active .step-dot { color: #FE2C55; }
+.step-item.wait  .step-dot { color: rgba(255,255,255,.2); }
+.step-lbl {
+  font-size: 11px; white-space: nowrap;
 }
-.confirm-actions { display: flex; gap: 10px; }
-
-/* 风格选择 */
-.style-loading {
-  text-align: center; color: rgba(255,255,255,.4);
-  padding: 20px; font-size: 13px;
+.step-item.done  .step-lbl { color: #4ade80; }
+.step-item.active .step-lbl { color: #fff; font-weight: 700; }
+.step-item.wait  .step-lbl { color: rgba(255,255,255,.3); }
+.step-line {
+  flex: 1; height: 2px; background: rgba(255,255,255,.1); margin-bottom: 14px;
 }
-.style-list {
-  display: flex; flex-direction: column; gap: 10px;
-  max-height: 380px; overflow-y: auto;
+.dot-pulse {
+  display: inline-block;
+  animation: pulse 1.2s ease-in-out infinite;
 }
-.style-card {
-  display: flex; gap: 12px; align-items: center;
-  background: rgba(255,255,255,.06);
-  border-radius: 12px; padding: 10px;
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition: border-color .15s, background .15s;
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: .5; transform: scale(.7); }
 }
-.style-card.selected {
-  border-color: #FE2C55;
-  background: rgba(254,44,85,.08);
-}
-.style-preview {
-  width: 54px; height: 72px;
-  border-radius: 8px; object-fit: cover; flex-shrink: 0;
-  background: #333;
-}
-.style-info {
-  flex: 1;
-  display: flex; flex-direction: column; gap: 4px;
-}
-.style-name { font-size: 14px; font-weight: 600; color: #fff; }
-.style-cat  { font-size: 11px; color: rgba(255,255,255,.4); }
-.style-check {
-  width: 24px; height: 24px; border-radius: 50%;
-  background: #FE2C55; color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700; flex-shrink: 0;
+.loading-hint {
+  font-size: 11px; color: rgba(255,255,255,.3); text-align: center;
 }
 
 /* 完成 */
-.done-view {
-  display: flex; flex-direction: column;
-  align-items: center; gap: 14px; padding: 16px 0;
-}
-.done-icon { font-size: 44px; }
-.done-view h3 { font-size: 20px; font-weight: 800; color: #fff; }
 .result-video {
   width: 100%; border-radius: 14px; max-height: 240px; object-fit: cover; background: #000;
 }
 .result-placeholder {
-  width: 100%; height: 160px; background: rgba(255,255,255,.1);
+  width: 100%; height: 140px; background: rgba(255,255,255,.08);
   border-radius: 14px; display: flex; align-items: center; justify-content: center;
   color: rgba(255,255,255,.4); font-size: 14px;
 }
-.done-actions { display: flex; gap: 10px; width: 100%; flex-wrap: wrap; }
+
+/* 反馈 */
+.feedback-box {
+  background: rgba(255,255,255,.05);
+  border-radius: 12px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.fb-title { font-size: 13px; color: rgba(255,255,255,.7); font-weight: 600; }
+.fb-sub   { font-size: 12px; color: rgba(255,255,255,.5); }
+.fb-row   { display: flex; gap: 10px; }
+.fb-btn {
+  flex: 1; padding: 9px; border: none; border-radius: 10px;
+  font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity .15s;
+}
+.fb-btn.good {
+  background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.3);
+}
+.fb-btn.bad {
+  background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.25);
+}
+.fb-reasons {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.reason-btn {
+  padding: 7px 14px; border: 1px solid rgba(255,255,255,.15);
+  background: rgba(255,255,255,.06); color: rgba(255,255,255,.7);
+  border-radius: 20px; font-size: 12px; cursor: pointer; transition: all .12s;
+}
+.reason-btn:hover { background: rgba(254,44,85,.12); border-color: rgba(254,44,85,.4); color: #FE2C55; }
+.fb-done { font-size: 13px; color: rgba(255,255,255,.5); text-align: center; padding: 6px 0; }
+
+.done-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
 /* 按钮 */
 .btn-secondary {
@@ -611,10 +622,10 @@ function resetAndClose() {
   align-items: center; gap: 16px; padding: 32px 0;
 }
 .error-icon { font-size: 48px; }
-.error-msg  { font-size: 14px; color: rgba(255,255,255,.7); text-align: center; }
+.error-msg  { font-size: 14px; color: rgba(255,255,255,.7); text-align: center; line-height: 1.5; }
 
 /* Transition */
-.sheet-enter-active, .sheet-leave-active { transition: transform .32s ease, opacity .32s; }
+.sheet-enter-active, .sheet-leave-active { transition: transform .3s ease, opacity .3s; }
 .sheet-enter-from { transform: translateY(100%); opacity: 0; }
 .sheet-leave-to   { transform: translateY(100%); opacity: 0; }
 </style>
