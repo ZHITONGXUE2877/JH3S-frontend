@@ -12,19 +12,21 @@ export const CATEGORIES = [
   { id: 'sport', label: '运动' },
 ]
 
-// 本地视频循环复用（3个视频 → 8条 mock 数据）
-const VIDEOS = [
-  '/videos/file1772678460526.mp4',
-  '/videos/building_fx.mp4',
-  '/videos/cat_cry.mp4',
-]
-const v = (i) => VIDEOS[i % VIDEOS.length]
+// 视频文件说明：
+//   file1772678460526.mp4  → 通用/服装/运动感
+//   building_fx.mp4        → 紫色瀑布楼，美妆品牌感（Puco）
+//   cat_cry.mp4            → 猫咪萌系，适合食品/母婴/可爱品类
+const VID = {
+  fashion:  '/videos/file1772678460526.mp4',
+  beauty:   '/videos/building_fx.mp4',
+  cute:     '/videos/cat_cry.mp4',
+}
 
 const ALL_VIDEOS = [
   {
     id: 1,
     category: 'clothing',
-    videoUrl: v(0),
+    videoUrl: VID.fashion,
     gradient: 'linear-gradient(160deg,#3a1c71,#d76d77,#ffaf7b)',
     account: { name: '时尚穿搭日记', handle: '@fashion_daily', avatar: '穿', color: '#d76d77', fans: '45.2万' },
     likes: 128400, favorites: 34200, shares: 8900, profit: 2340,
@@ -39,7 +41,7 @@ const ALL_VIDEOS = [
   {
     id: 2,
     category: 'food',
-    videoUrl: v(1),
+    videoUrl: VID.cute,
     gradient: 'linear-gradient(160deg,#11998e,#38ef7d)',
     account: { name: '白牌零食测评', handle: '@snack_lab', avatar: '食', color: '#11998e', fans: '28.7万' },
     likes: 89600, favorites: 21300, shares: 5600, profit: 1890,
@@ -54,7 +56,7 @@ const ALL_VIDEOS = [
   {
     id: 3,
     category: 'beauty',
-    videoUrl: v(2),
+    videoUrl: VID.beauty,
     gradient: 'linear-gradient(160deg,#f953c6,#b91d73)',
     account: { name: '美妆姐姐Lily', handle: '@beauty_lily', avatar: '妆', color: '#f953c6', fans: '112万' },
     likes: 234500, favorites: 67800, shares: 18200, profit: 5670,
@@ -69,7 +71,7 @@ const ALL_VIDEOS = [
   {
     id: 4,
     category: 'home',
-    videoUrl: v(0),
+    videoUrl: VID.fashion,
     gradient: 'linear-gradient(160deg,#1a1a2e,#16213e,#0f3460)',
     account: { name: '家居好物分享', handle: '@home_picks', avatar: '家', color: '#0f3460', fans: '33.1万' },
     likes: 67200, favorites: 28900, shares: 4300, profit: 1240,
@@ -84,7 +86,7 @@ const ALL_VIDEOS = [
   {
     id: 5,
     category: 'digital',
-    videoUrl: v(1),
+    videoUrl: VID.fashion,
     gradient: 'linear-gradient(160deg,#0575e6,#021b79)',
     account: { name: '数码老狗', handle: '@tech_dog', avatar: '数', color: '#0575e6', fans: '89.4万' },
     likes: 156700, favorites: 43200, shares: 22100, profit: 4320,
@@ -99,7 +101,7 @@ const ALL_VIDEOS = [
   {
     id: 6,
     category: 'baby',
-    videoUrl: v(2),
+    videoUrl: VID.cute,
     gradient: 'linear-gradient(160deg,#ffd89b,#19547b)',
     account: { name: '宝宝成长日记', handle: '@baby_grow', avatar: '婴', color: '#19547b', fans: '67.3万' },
     likes: 98300, favorites: 54100, shares: 12300, profit: 2890,
@@ -114,7 +116,7 @@ const ALL_VIDEOS = [
   {
     id: 7,
     category: 'sport',
-    videoUrl: v(0),
+    videoUrl: VID.fashion,
     gradient: 'linear-gradient(160deg,#f7971e,#ffd200)',
     account: { name: '健身教练小王', handle: '@coach_wang', avatar: '运', color: '#f7971e', fans: '201万' },
     likes: 312400, favorites: 89600, shares: 34500, profit: 8760,
@@ -129,7 +131,7 @@ const ALL_VIDEOS = [
   {
     id: 8,
     category: 'clothing',
-    videoUrl: v(1),
+    videoUrl: VID.beauty,
     gradient: 'linear-gradient(160deg,#e96c35,#c0392b)',
     account: { name: '显瘦穿搭研究所', handle: '@slim_style', avatar: '瘦', color: '#c0392b', fans: '78.9万' },
     likes: 187300, favorites: 62100, shares: 15600, profit: 4230,
