@@ -184,13 +184,13 @@ function resetAndClose() {
           </div>
 
           <div class="source-card">
-            <div class="source-thumb" :style="{ background: video?.gradient }">
+            <div class="source-thumb">
+              <video :src="video?.videoUrl" class="thumb-video" muted autoplay loop playsinline />
               <span class="duration-tag">{{ video?.duration }}s</span>
             </div>
             <div class="source-info">
-              <div class="source-account">@{{ video?.account?.name }}</div>
-              <div class="hook-badge">{{ video?.hookEmoji }} {{ video?.hookType }}</div>
               <div class="source-stats">❤️ {{ (video?.likes/10000).toFixed(1) }}万 &nbsp;💰 ¥{{ video?.profit?.toLocaleString() }}</div>
+              <div class="source-title">{{ video?.title }}</div>
             </div>
           </div>
 
@@ -391,21 +391,22 @@ function resetAndClose() {
 }
 .source-thumb {
   width: 52px; height: 68px; border-radius: 8px; flex-shrink: 0;
-  position: relative; display: flex; align-items: flex-end;
-  justify-content: flex-end; padding: 4px;
+  position: relative; overflow: hidden; background: #222;
+}
+.thumb-video {
+  width: 100%; height: 100%; object-fit: cover;
 }
 .duration-tag {
-  background: rgba(0,0,0,.5); color: #fff;
+  position: absolute; bottom: 4px; right: 4px;
+  background: rgba(0,0,0,.6); color: #fff;
   font-size: 10px; padding: 1px 5px; border-radius: 4px;
 }
-.source-info { display: flex; flex-direction: column; gap: 4px; }
-.source-account { font-size: 13px; font-weight: 700; color: #fff; }
-.source-stats   { font-size: 11px; color: rgba(255,255,255,.5); }
-.hook-badge {
-  background: rgba(254,44,85,.2); color: #FE2C55;
-  font-size: 11px; font-weight: 700;
-  padding: 2px 8px; border-radius: 8px;
-  display: inline-block; width: fit-content;
+.source-info { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+.source-stats { font-size: 11px; color: rgba(255,255,255,.5); }
+.source-title {
+  font-size: 12px; color: rgba(255,255,255,.75); line-height: 1.4;
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; overflow: hidden;
 }
 .section-title {
   font-size: 12px; font-weight: 700;
