@@ -307,13 +307,17 @@ function openModal(v) { modalVideo.value = v; modalVisible.value = true }
 
 .progress-bar {
   position: fixed;
-  bottom: 80px; left: 0; right: 0;
+  bottom: 64px; left: 0; right: 0;
   height: 2px;
   background: rgba(255,255,255,.2);
   z-index: 30;
   pointer-events: none;
   max-width: 430px;
   margin: 0 auto;
+}
+@media (min-width: 768px) {
+  .progress-bar { bottom: 16px; }
+  .mute-btn { top: 80px; }
 }
 .progress-fill {
   height: 100%;
