@@ -88,12 +88,23 @@ async function startStage1() {
   fileList.value.forEach(f => form.append('images', f))
 
   try {
-    const r    = await fetch(`${API_BASE}/v1/task/init_views`, { method: 'POST', body: form })
+    const r = await fetch(`${API_BASE}/v1/task/init_views`, { method: 'POST', body: form })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      errorMsg.value = err.detail || `服务器错误 (${r.status})，请重试`
+      uiStage.value  = 'error'
+      return
+    }
     const data = await r.json()
+    if (!data.task_id) {
+      errorMsg.value = '服务器返回数据异常，请重试'
+      uiStage.value  = 'error'
+      return
+    }
     taskId.value = data.task_id
     pollTimer = setInterval(pollStatus, 2000)
-  } catch {
-    errorMsg.value = '网络错误，请检查后端是否在线'
+  } catch (e) {
+    errorMsg.value = '网络连接失败，请检查网络或稍后重试'
     uiStage.value  = 'error'
   }
 }
