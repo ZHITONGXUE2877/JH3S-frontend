@@ -27,149 +27,105 @@ export const CATEGORIES = [
   { id: 'sport',    label: '运动' },
 ]
 
-// 视频文件对应真实内容（文字信息必须与视频画面一致）：
-//   file1772678460526.mp4  → 绿色+紫色芦荟纤维袜，自然旋涡背景
-//   building_fx.mp4        → 紫色霓虹城市夜景，品牌感（适合美妆/数码/时尚）
-//   cat_cry.mp4            → 萌系橘猫，适合宠物/家居/母婴
-const VID = {
-  socks:  '/videos/file1772678460526.mp4',
-  city:   '/videos/building_fx.mp4',
-  cat:    '/videos/cat_cry.mp4',
+// ── 品类渐变色映射 ───────────────────────────────────────────────
+const CATEGORY_GRADIENT = {
+  clothing: 'linear-gradient(160deg,#e96c35,#c0392b)',
+  food:     'linear-gradient(160deg,#f7971e,#ffd200)',
+  beauty:   'linear-gradient(160deg,#f953c6,#b91d73)',
+  home:     'linear-gradient(160deg,#fc5c7d,#6a3093)',
+  digital:  'linear-gradient(160deg,#0575e6,#021b79)',
+  baby:     'linear-gradient(160deg,#ffd89b,#19547b)',
+  sport:    'linear-gradient(160deg,#1d976c,#93f9b9)',
+  default:  'linear-gradient(160deg,#6366f1,#8b5cf6)',
 }
 
-// ── 注意：likes/favorites/shares/profit 全部归零 ─────────────
-// 后台会实时收集真实互动数据，前端通过 /v1/engagement/stats 接口
-// 获取真实计数并动态渲染。profit 字段前端隐藏，后台预留接口。
-const ALL_VIDEOS = [
-  {
-    id: 1, content_id: 'video_1',
-    category: 'clothing',
-    videoUrl: VID.socks,
-    gradient: 'linear-gradient(160deg,#134e2a,#56c57a,#a8edca)',
-    account: { name: '袜子研究所', handle: '@socks_lab', avatar: '穿', color: '#56c57a', fans: '45.2万' },
+// ── 品类头像色映射 ───────────────────────────────────────────────
+const CATEGORY_COLOR = {
+  clothing: '#e96c35', food: '#f7971e', beauty: '#f953c6',
+  home: '#fc5c7d', digital: '#0575e6', baby: '#19547b',
+  sport: '#1d976c', default: '#8b5cf6',
+}
+
+// ── API 地址 ─────────────────────────────────────────────────────
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+
+// ── StyleTemplate → Video 对象映射 ──────────────────────────────
+function styleToVideo(s, index) {
+  const cat = s.category || 'default'
+  const creatorName = s.creator_name || s.name || '创作者'
+  const avatarChar  = creatorName.slice(0, 1)
+  return {
+    id:          index + 1,
+    content_id:  s.id,
+    category:    cat,
+    videoUrl:    s.demo_video_url || '',
+    gradient:    CATEGORY_GRADIENT[cat] || CATEGORY_GRADIENT.default,
+    account: {
+      name:   creatorName,
+      handle: '@' + s.id.slice(0, 8),
+      avatar: avatarChar,
+      color:  CATEGORY_COLOR[cat] || CATEGORY_COLOR.default,
+      fans:   '0',
+    },
     likes: 0, favorites: 0, shares: 0, profit: 0,
-    duration: 15,
-    title: '芦荟抑菌袜真的绝！穿了一周脚不臭，宿舍室友全来问我买哪家',
-    tags: ['女装', '抑菌袜', '芦荟纤维'],
-    music: '清新自然音 · 芦荟研究所',
-    hookType: '痛点共鸣型', hookEmoji: '😰',
-    hookDesc: '前3秒脚臭尴尬场景放大，产品一出立刻对比解决',
-    isHot: true,
-  },
+    duration: s.video_duration || 5,
+    title:    s.name || '精品视频',
+    tags:     [s.category || '推荐'],
+    music:    '专属配乐',
+    hookType: '产品展示型',
+    hookEmoji: '✨',
+    hookDesc:  s.name || '',
+    isHot:     false,
+  }
+}
+
+// ── 兜底演示视频（后台还没有发布内容时展示）───────────────────────
+const DEMO_VIDEOS = [
   {
-    id: 2, content_id: 'video_2',
-    category: 'food',
-    videoUrl: VID.cat,
-    gradient: 'linear-gradient(160deg,#f7971e,#ffd200)',
-    account: { name: '猫的零食铺', handle: '@cat_snacks', avatar: '猫', color: '#f7971e', fans: '28.7万' },
-    likes: 0, favorites: 0, shares: 0, profit: 0,
-    duration: 12,
-    title: '猫咪看一眼就扑过来！进口冻干零食连挑食星人都疯狂，一袋才9.9',
-    tags: ['宠物零食', '猫零食', '白牌食品'],
-    music: '萌宠BGM · 猫咪日记',
-    hookType: '萌宠反应型', hookEmoji: '🐱',
-    hookDesc: '前2秒猫咪飞奔扑食反应，宠物情绪瞬间带动购买欲',
-    isHot: true,
-  },
-  {
-    id: 3, content_id: 'video_3',
+    id: 1, content_id: 'demo_1',
     category: 'beauty',
-    videoUrl: VID.city,
+    videoUrl: '/videos/building_fx.mp4',
     gradient: 'linear-gradient(160deg,#f953c6,#b91d73)',
-    account: { name: 'Lily美妆笔记', handle: '@beauty_lily', avatar: '妆', color: '#f953c6', fans: '112万' },
-    likes: 0, favorites: 0, shares: 0, profit: 0,
-    duration: 18,
-    title: '平价代替贵妇面霜！皮肤科医生亲测这个成分，用完皮肤直接封神',
-    tags: ['美妆', '护肤', '平替'],
-    music: '氛围感纯音乐 · 霓虹城市',
-    hookType: '权威背书型', hookEmoji: '👨‍⚕️',
-    hookDesc: '霓虹城市夜景烘托高端感，皮肤科医生资质背书引出产品',
-    isHot: true,
-  },
-  {
-    id: 4, content_id: 'video_4',
-    category: 'home',
-    videoUrl: VID.cat,
-    gradient: 'linear-gradient(160deg,#fc5c7d,#6a3093)',
-    account: { name: '橘猫居家日记', handle: '@cat_home', avatar: '家', color: '#fc5c7d', fans: '33.1万' },
+    account: { name: '演示账号', handle: '@demo', avatar: '示', color: '#f953c6', fans: '—' },
     likes: 0, favorites: 0, shares: 0, profit: 0,
     duration: 10,
-    title: '橘猫睡着都不肯走！这款记忆棉坐垫软度封神，久坐腰不酸的秘密',
-    tags: ['家居', '坐垫', '记忆棉'],
-    music: '治愈猫咪音乐 · 慵懒午后',
-    hookType: '场景代入型', hookEmoji: '🐈',
-    hookDesc: '前3秒橘猫舒展蜷缩反应，用萌宠体验代入居家舒适感',
-    isHot: false,
-  },
-  {
-    id: 5, content_id: 'video_5',
-    category: 'digital',
-    videoUrl: VID.city,
-    gradient: 'linear-gradient(160deg,#0575e6,#021b79)',
-    account: { name: '数码老狗', handle: '@tech_dog', avatar: '数', color: '#0575e6', fans: '89.4万' },
-    likes: 0, favorites: 0, shares: 0, profit: 0,
-    duration: 20,
-    title: '799手机打游戏不输iPhone！发布会现场不敢公布的实测数据来了',
-    tags: ['数码', '手机', '性价比'],
-    music: '赛博朋克电子乐 · 未来感',
-    hookType: '反常识冲击型', hookEmoji: '🤯',
-    hookDesc: '赛博朋克城市建立科技感，反常识标题前3秒引爆好奇心',
-    isHot: true,
-  },
-  {
-    id: 6, content_id: 'video_6',
-    category: 'baby',
-    videoUrl: VID.cat,
-    gradient: 'linear-gradient(160deg,#ffd89b,#19547b)',
-    account: { name: '宝宝成长日记', handle: '@baby_grow', avatar: '婴', color: '#19547b', fans: '67.3万' },
-    likes: 0, favorites: 0, shares: 0, profit: 0,
-    duration: 14,
-    title: '儿科医生推荐！猫咪安抚玩具让宝宝自主入睡，宝妈终于解放了',
-    tags: ['母婴', '安抚玩具', '婴儿睡眠'],
-    music: '温馨摇篮曲 · 猫咪轻音乐',
-    hookType: '专家背书型', hookEmoji: '👶',
-    hookDesc: '萌猫画面引发情感共鸣，儿科医生专业背书建立购买信任',
-    isHot: false,
-  },
-  {
-    id: 7, content_id: 'video_7',
-    category: 'sport',
-    videoUrl: VID.socks,
-    gradient: 'linear-gradient(160deg,#1d976c,#93f9b9)',
-    account: { name: '运动装备测评', handle: '@gear_test', avatar: '运', color: '#1d976c', fans: '201万' },
-    likes: 0, favorites: 0, shares: 0, profit: 0,
-    duration: 16,
-    title: '马拉松冠军同款！这双防滑运动袜跑50公里不起泡，脚感绝了',
-    tags: ['运动', '专业运动袜', '马拉松'],
-    music: '运动节奏BGM · 燃爆',
-    hookType: '专业测评型', hookEmoji: '🏃',
-    hookDesc: '前3秒展示实测跑步数据，精准触达跑步党和运动爱好者',
-    isHot: true,
-  },
-  {
-    id: 8, content_id: 'video_8',
-    category: 'clothing',
-    videoUrl: VID.city,
-    gradient: 'linear-gradient(160deg,#e96c35,#c0392b)',
-    account: { name: '夜场穿搭星球', handle: '@night_style', avatar: '穿', color: '#e96c35', fans: '78.9万' },
-    likes: 0, favorites: 0, shares: 0, profit: 0,
-    duration: 11,
-    title: '微胖也能驾驭！这条直筒裤把我168穿出172感，腿长显瘦绝了',
-    tags: ['女装', '显瘦', '直筒裤'],
-    music: '流行时尚热歌 · 霓虹夜',
-    hookType: '情绪共鸣型', hookEmoji: '❤️',
-    hookDesc: '霓虹城市夜景烘托时尚感，穿搭前后对比情绪共鸣爆棚',
-    isHot: true,
+    title: '（演示）管理员发布视频后将在此展示',
+    tags: ['演示'],
+    music: '—',
+    hookType: '演示', hookEmoji: '🎬', hookDesc: '后台审核通过并发布后自动出现', isHot: false,
   },
 ]
 
 export const useVideoStore = defineStore('video', () => {
   const activeCategory = ref('all')
-  const currentIndex = ref(0)
+  const currentIndex   = ref(0)
+  const allVideos      = ref([])
+  const loading        = ref(false)
+
+  // ── 从后端拉取已发布视频 ──────────────────────────────────────
+  async function fetchVideos() {
+    loading.value = true
+    try {
+      const res = await fetch(`${API_BASE}/v1/styles?published=true`)
+      if (!res.ok) throw new Error('API error')
+      const styles = await res.json()
+      // 过滤掉没有 demo_video_url 的
+      const valid = styles.filter(s => s.demo_video_url)
+      allVideos.value = valid.length > 0
+        ? valid.map((s, i) => styleToVideo(s, i))
+        : DEMO_VIDEOS
+    } catch {
+      // 网络失败 → 用演示视频
+      allVideos.value = DEMO_VIDEOS
+    } finally {
+      loading.value = false
+    }
+  }
 
   const filteredVideos = computed(() => {
-    if (activeCategory.value === 'all') return ALL_VIDEOS
-    return ALL_VIDEOS.filter(v => v.category === activeCategory.value)
+    const vids = allVideos.value.length ? allVideos.value : DEMO_VIDEOS
+    if (activeCategory.value === 'all') return vids
+    return vids.filter(v => v.category === activeCategory.value)
   })
 
   const currentVideo = computed(() => filteredVideos.value[currentIndex.value] || null)
@@ -196,5 +152,9 @@ export const useVideoStore = defineStore('video', () => {
     return n.toString()
   }
 
-  return { activeCategory, currentIndex, filteredVideos, currentVideo, setCategory, nextVideo, prevVideo, formatCount }
+  return {
+    activeCategory, currentIndex, allVideos, loading,
+    filteredVideos, currentVideo,
+    fetchVideos, setCategory, nextVideo, prevVideo, formatCount,
+  }
 })

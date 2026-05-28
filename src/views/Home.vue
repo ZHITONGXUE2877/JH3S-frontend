@@ -172,7 +172,9 @@ function togglePlay() {
 // ─── 分类切换重置 ──────────────────────────────────
 watch(() => store.activeCategory, refreshSlots)
 
-onMounted(() => {
+onMounted(async () => {
+  // 先拉取后端发布的视频，再初始化播放
+  await store.fetchVideos()
   refreshSlots()
   window.addEventListener('keydown', onKeydown)
   // 上报首屏视频曝光
