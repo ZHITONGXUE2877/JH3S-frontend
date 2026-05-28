@@ -18,32 +18,40 @@ export function getDeviceType() {
 
 export const CATEGORIES = [
   { id: 'all',      label: '推荐' },
-  { id: 'clothing', label: '女装' },
-  { id: 'food',     label: '白牌食品' },
-  { id: 'beauty',   label: '美妆' },
-  { id: 'home',     label: '家居' },
-  { id: 'digital',  label: '数码' },
-  { id: 'baby',     label: '母婴' },
-  { id: 'sport',    label: '运动' },
+  { id: 'clothing', label: '服饰鞋包' },
+  { id: 'beauty',   label: '美妆护肤' },
+  { id: 'food',     label: '食品饮料' },
+  { id: 'home',     label: '家居个清' },
+  { id: 'digital',  label: '3C数码' },
+  { id: 'baby',     label: '母婴宠物' },
+  { id: 'jewelry',  label: '珠宝文玩' },
+  { id: 'sport',    label: '运动户外' },
+  { id: 'fresh',    label: '生鲜果蔬' },
+  { id: 'auto',     label: '汽车用品' },
+  { id: 'other',    label: '其他' },
 ]
 
 // ── 品类渐变色映射 ───────────────────────────────────────────────
 const CATEGORY_GRADIENT = {
   clothing: 'linear-gradient(160deg,#e96c35,#c0392b)',
-  food:     'linear-gradient(160deg,#f7971e,#ffd200)',
   beauty:   'linear-gradient(160deg,#f953c6,#b91d73)',
+  food:     'linear-gradient(160deg,#f7971e,#ffd200)',
   home:     'linear-gradient(160deg,#fc5c7d,#6a3093)',
   digital:  'linear-gradient(160deg,#0575e6,#021b79)',
   baby:     'linear-gradient(160deg,#ffd89b,#19547b)',
+  jewelry:  'linear-gradient(160deg,#f6d365,#fda085)',
   sport:    'linear-gradient(160deg,#1d976c,#93f9b9)',
+  fresh:    'linear-gradient(160deg,#56ab2f,#a8e063)',
+  auto:     'linear-gradient(160deg,#373b44,#4286f4)',
+  other:    'linear-gradient(160deg,#8e9eab,#eef2f3)',
   default:  'linear-gradient(160deg,#6366f1,#8b5cf6)',
 }
 
-// ── 品类头像色映射 ───────────────────────────────────────────────
 const CATEGORY_COLOR = {
-  clothing: '#e96c35', food: '#f7971e', beauty: '#f953c6',
+  clothing: '#e96c35', beauty: '#f953c6', food: '#f7971e',
   home: '#fc5c7d', digital: '#0575e6', baby: '#19547b',
-  sport: '#1d976c', default: '#8b5cf6',
+  jewelry: '#fda085', sport: '#1d976c', fresh: '#56ab2f',
+  auto: '#4286f4', other: '#8e9eab', default: '#8b5cf6',
 }
 
 // ── API 地址 ─────────────────────────────────────────────────────
