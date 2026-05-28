@@ -6,12 +6,15 @@ const emit  = defineEmits(['close'])
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
-// ── 状态机：upload → loading → done → error ──────────────
+// ── 状态机 ────────────────────────────────────────────────────
+// upload | loading_3view | confirm_3view | loading_scene |
+// confirm_scene | loading_video | done | error
 const uiStage  = ref('upload')
 const taskId   = ref(null)
 const errorMsg = ref('')
+const progress = ref(0)
 
-// ── 文件上传 ──────────────────────────────────────────────
+// ── 图片上传 ──────────────────────────────────────────────────
 const fileInput = ref(null)
 const previews  = ref([])
 const fileList  = ref([])
@@ -36,9 +39,13 @@ function removeImg(i) {
   fileList.value.splice(i, 1)
 }
 
-// ── 风格选择（在上传阶段完成）────────────────────────────
+// ── 风格选择 ──────────────────────────────────────────────────
 const styles          = ref([])
 const selectedStyleId = ref('')
+
+const selectedStyleName = computed(() =>
+  styles.value.find(s => s.id === selectedStyleId.value)?.name || ''
+)
 
 async function loadStyles() {
   try {
@@ -61,71 +68,50 @@ async function loadStyles() {
 
 watch(() => props.visible, (v) => { if (v && !styles.value.length) loadStyles() })
 
-// ── 进度轮询 ──────────────────────────────────────────────
-const progress   = ref(0)
-const backStatus = ref('')   // 后端 task.status
-let   pollTimer  = null
-
+// ── 轮询 ──────────────────────────────────────────────────────
+let pollTimer = null
 function stopPoll() { clearInterval(pollTimer); pollTimer = null }
 
-// 三步推断
-const step1 = computed(() => {
-  if (['PROCESSING_STG2','AWAITING_CONFIRM','COMPLETED'].includes(backStatus.value)) return 'done'
-  if (backStatus.value === 'PROCESSING_STG1') return 'active'
-  return 'wait'
-})
-const step2 = computed(() => {
-  if (backStatus.value === 'COMPLETED') return 'done'
-  if (backStatus.value === 'PROCESSING_STG2' && progress.value >= 50) return 'done'
-  if (backStatus.value === 'PROCESSING_STG2') return 'active'
-  return 'wait'
-})
-const step3 = computed(() => {
-  if (backStatus.value === 'COMPLETED') return 'done'
-  if (backStatus.value === 'PROCESSING_STG2' && progress.value >= 50) return 'active'
-  return 'wait'
-})
+// ── Stage 1 数据：三视图 ──────────────────────────────────────
+const viewImageUrls   = ref([])
+const selectedViewUrl = ref('')
 
-const loadingTitle = computed(() => {
-  if (step3.value === 'active') return '视频渲染中...'
-  if (step2.value === 'active') return '合成爆款场景图...'
-  return 'AI 生成三视图中...'
-})
+// ── Stage 2a 数据：场景图 ─────────────────────────────────────
+const sceneImageUrl = ref('')
+const videoPrompt   = ref('')   // 可由用户编辑，默认来自风格模板
 
-const accentColor = computed(() => {
-  if (step3.value === 'active') return '#FE2C55'
-  if (step2.value === 'active') return '#8b5cf6'
-  return '#7ECFFF'
-})
-
+// ── Stage 2b 数据：完成 ───────────────────────────────────────
 const resultVideoUrl = ref('')
 
-async function pollStatus() {
-  if (!taskId.value) return
-  try {
-    const r    = await fetch(`${API_BASE}/v1/task/status/${taskId.value}`)
-    const data = await r.json()
-    progress.value   = data.progress ?? 0
-    backStatus.value = data.status
-    if (data.status === 'COMPLETED') {
-      stopPoll()
-      resultVideoUrl.value = data.video_url
-      uiStage.value = 'done'
-    } else if (data.status === 'FAILED') {
-      stopPoll()
-      errorMsg.value = data.error || '生成失败，请重试'
-      uiStage.value  = 'error'
-    }
-    // AWAITING_CONFIRM = no style found, keep polling — backend may auto-continue
-  } catch { /* 网络波动，继续轮询 */ }
+// ── 灯箱（1:1 全图预览）──────────────────────────────────────
+const lightboxUrl  = ref('')
+const lightboxOpen = ref(false)
+
+function openLightbox(url) { lightboxUrl.value = url; lightboxOpen.value = true }
+function closeLightbox()   { lightboxOpen.value = false }
+
+// 点击三视图：选中 + 打开灯箱
+function selectAndPreview(url) {
+  selectedViewUrl.value = url
+  openLightbox(url)
 }
 
-// ── 开始生成 ──────────────────────────────────────────────
+// ── loading 阶段的显示信息 ────────────────────────────────────
+const loadingInfo = computed(() => {
+  if (uiStage.value === 'loading_3view')
+    return { title: 'AI 生成三视图中...', color: '#7ECFFF', hint: '预计 2-4 分钟，Seedream V4 正在处理' }
+  if (uiStage.value === 'loading_scene')
+    return { title: 'AI 合成场景图中...', color: '#a78bfa', hint: '预计 1-3 分钟，Seedream V4 正在处理' }
+  if (uiStage.value === 'loading_video')
+    return { title: '视频渲染中...', color: '#FE2C55', hint: '预计 2-5 分钟，Kling 2.1 正在处理' }
+  return { title: '处理中...', color: '#fff', hint: '' }
+})
+
+// ── 开始生成三视图 ────────────────────────────────────────────
 async function startGeneration() {
   if (!fileList.value.length) return
-  uiStage.value    = 'loading'
-  progress.value   = 0
-  backStatus.value = 'PROCESSING_STG1'
+  uiStage.value  = 'loading_3view'
+  progress.value = 0
 
   const form = new FormData()
   form.append('style_id', selectedStyleId.value || 'tmpl_001')
@@ -147,14 +133,103 @@ async function startGeneration() {
       return
     }
     taskId.value = data.task_id
-    pollTimer = setInterval(pollStatus, 2000)
+    pollTimer = setInterval(() => pollFor('AWAITING_CONFIRM'), 2000)
   } catch {
     errorMsg.value = '网络连接失败，请检查网络后重试'
     uiStage.value  = 'error'
   }
 }
 
-// ── 反馈 ──────────────────────────────────────────────────
+// ── 通用轮询：等待指定目标状态 ───────────────────────────────
+async function pollFor(targetStatus) {
+  if (!taskId.value) return
+  try {
+    const r    = await fetch(`${API_BASE}/v1/task/status/${taskId.value}`)
+    const data = await r.json()
+    progress.value = data.progress ?? 0
+
+    if (data.status === 'FAILED') {
+      stopPoll()
+      errorMsg.value = data.error || '生成失败，请重试'
+      uiStage.value  = 'error'
+      return
+    }
+
+    if (data.status === targetStatus) {
+      stopPoll()
+      if (targetStatus === 'AWAITING_CONFIRM') {
+        viewImageUrls.value   = data.view_image_urls || []
+        selectedViewUrl.value = viewImageUrls.value[0] || ''
+        if (data.default_video_prompt) videoPrompt.value = data.default_video_prompt
+        uiStage.value = 'confirm_3view'
+      } else if (targetStatus === 'SCENE_READY') {
+        sceneImageUrl.value = data.scene_image_url || ''
+        if (data.default_video_prompt && !videoPrompt.value)
+          videoPrompt.value = data.default_video_prompt
+        uiStage.value = 'confirm_scene'
+      } else if (targetStatus === 'COMPLETED') {
+        resultVideoUrl.value = data.video_url || ''
+        uiStage.value = 'done'
+      }
+    }
+  } catch { /* 网络波动，继续轮询 */ }
+}
+
+// ── 确认三视图 → 启动场景图生成 ──────────────────────────────
+async function confirmAndStartScene() {
+  if (!selectedViewUrl.value) return
+  uiStage.value  = 'loading_scene'
+  progress.value = 0
+  try {
+    const r = await fetch(`${API_BASE}/v1/task/start_scene`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        task_id:  taskId.value,
+        view_url: selectedViewUrl.value,
+        style_id: selectedStyleId.value,
+      }),
+    })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      errorMsg.value = err.detail || `场景图启动失败 (${r.status})`
+      uiStage.value  = 'error'
+      return
+    }
+    pollTimer = setInterval(() => pollFor('SCENE_READY'), 2000)
+  } catch {
+    errorMsg.value = '网络连接失败，请重试'
+    uiStage.value  = 'error'
+  }
+}
+
+// ── 确认场景图 + 视频提示词 → 启动视频生成 ───────────────────
+async function confirmAndStartVideo() {
+  uiStage.value  = 'loading_video'
+  progress.value = 0
+  try {
+    const r = await fetch(`${API_BASE}/v1/task/start_video`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        task_id:      taskId.value,
+        video_prompt: videoPrompt.value,
+      }),
+    })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      errorMsg.value = err.detail || `视频生成启动失败 (${r.status})`
+      uiStage.value  = 'error'
+      return
+    }
+    pollTimer = setInterval(() => pollFor('COMPLETED'), 2000)
+  } catch {
+    errorMsg.value = '网络连接失败，请重试'
+    uiStage.value  = 'error'
+  }
+}
+
+// ── 反馈 ──────────────────────────────────────────────────────
 const feedbackDone   = ref(false)
 const feedbackRating = ref('')
 const showReasons    = ref(false)
@@ -184,25 +259,37 @@ async function submitFeedback(rating, reason = '') {
   feedbackRating.value = rating
 }
 
-// ── 重置关闭 ──────────────────────────────────────────────
+// ── 重置关闭 ──────────────────────────────────────────────────
 function resetAndClose() {
   stopPoll()
-  uiStage.value        = 'upload'
-  previews.value       = []
-  fileList.value       = []
-  resultVideoUrl.value = ''
-  progress.value       = 0
-  taskId.value         = null
-  errorMsg.value       = ''
-  backStatus.value     = ''
-  feedbackDone.value   = false
-  feedbackRating.value = ''
-  showReasons.value    = false
+  uiStage.value         = 'upload'
+  previews.value        = []
+  fileList.value        = []
+  taskId.value          = null
+  errorMsg.value        = ''
+  progress.value        = 0
+  viewImageUrls.value   = []
+  selectedViewUrl.value = ''
+  sceneImageUrl.value   = ''
+  videoPrompt.value     = ''
+  resultVideoUrl.value  = ''
+  lightboxOpen.value    = false
+  feedbackDone.value    = false
+  feedbackRating.value  = ''
+  showReasons.value     = false
   emit('close')
 }
 </script>
 
 <template>
+  <!-- 灯箱：position:fixed 覆盖全屏，不受 sheet overflow 限制 -->
+  <Teleport to="body">
+    <div v-if="lightboxOpen" class="lightbox" @click.self="closeLightbox">
+      <button class="lightbox-close" @click="closeLightbox">✕</button>
+      <img :src="lightboxUrl" class="lightbox-img" @click.stop />
+    </div>
+  </Teleport>
+
   <Transition name="sheet">
     <div v-if="visible" class="overlay" @click.self="resetAndClose">
       <div class="sheet">
@@ -241,7 +328,6 @@ function resetAndClose() {
           <input ref="fileInput" type="file" accept="image/*" multiple
             style="display:none" @change="onFilePick" />
 
-          <!-- 视频风格 -->
           <template v-if="styles.length">
             <div class="section-title">视频风格</div>
             <div class="style-scroll">
@@ -249,63 +335,136 @@ function resetAndClose() {
                 v-for="s in styles" :key="s.id"
                 :class="['style-chip', { active: selectedStyleId === s.id }]"
                 @click="selectedStyleId = s.id"
-              >
-                {{ s.name }}
-              </div>
+              >{{ s.name }}</div>
             </div>
           </template>
 
-          <div class="tip">建议上传正面、侧面、细节图，AI 自动生成爆款视频</div>
+          <div class="tip">建议上传正面、侧面、细节图，AI 自动分三步生成爆款视频</div>
 
           <button class="generate-btn" :disabled="!previews.length" @click="startGeneration">
             开始生成
           </button>
         </template>
 
-        <!-- ══ 生成中 ══ -->
-        <template v-else-if="uiStage === 'loading'">
+        <!-- ══ 生成中（三个 loading 阶段共用此模板）══ -->
+        <template v-else-if="['loading_3view','loading_scene','loading_video'].includes(uiStage)">
           <div class="loading-view">
-            <div class="spinner" :style="{ borderTopColor: accentColor }"></div>
-            <p class="loading-title">{{ loadingTitle }}</p>
+            <div class="spinner" :style="{ borderTopColor: loadingInfo.color }"></div>
+            <p class="loading-title">{{ loadingInfo.title }}</p>
             <div class="progress-wrap">
               <div class="progress-track">
                 <div class="progress-fill"
-                  :style="{ width: progress + '%', background: accentColor }"></div>
+                  :style="{ width: progress + '%', background: loadingInfo.color }"></div>
               </div>
               <span class="progress-num">{{ progress }}%</span>
             </div>
 
+            <!-- 三步指示器 -->
             <div class="step-track">
-              <div :class="['step-item', step1]">
+              <div :class="['step-item', uiStage === 'loading_3view' ? 'active' :
+                ['loading_scene','loading_video'].includes(uiStage) ? 'done' : 'wait']">
                 <div class="step-dot">
-                  <span v-if="step1==='done'">✓</span>
-                  <span v-else-if="step1==='active'" class="dot-pulse">●</span>
+                  <span v-if="['loading_scene','loading_video'].includes(uiStage)">✓</span>
+                  <span v-else-if="uiStage === 'loading_3view'" class="dot-pulse">●</span>
                   <span v-else style="opacity:.3">○</span>
                 </div>
                 <span class="step-lbl">三视图</span>
               </div>
               <div class="step-line"></div>
-              <div :class="['step-item', step2]">
+              <div :class="['step-item', uiStage === 'loading_scene' ? 'active' :
+                uiStage === 'loading_video' ? 'done' : 'wait']">
                 <div class="step-dot">
-                  <span v-if="step2==='done'">✓</span>
-                  <span v-else-if="step2==='active'" class="dot-pulse">●</span>
+                  <span v-if="uiStage === 'loading_video'">✓</span>
+                  <span v-else-if="uiStage === 'loading_scene'" class="dot-pulse">●</span>
                   <span v-else style="opacity:.3">○</span>
                 </div>
                 <span class="step-lbl">场景图</span>
               </div>
               <div class="step-line"></div>
-              <div :class="['step-item', step3]">
+              <div :class="['step-item', uiStage === 'loading_video' ? 'active' : 'wait']">
                 <div class="step-dot">
-                  <span v-if="step3==='done'">✓</span>
-                  <span v-else-if="step3==='active'" class="dot-pulse">●</span>
+                  <span v-if="uiStage === 'loading_video'" class="dot-pulse">●</span>
                   <span v-else style="opacity:.3">○</span>
                 </div>
                 <span class="step-lbl">视频渲染</span>
               </div>
             </div>
 
-            <p class="loading-hint">全程自动生成，无需等待确认，通常 3-5 分钟</p>
+            <p class="loading-hint">{{ loadingInfo.hint }}</p>
           </div>
+        </template>
+
+        <!-- ══ 确认三视图 ══ -->
+        <template v-else-if="uiStage === 'confirm_3view'">
+          <div class="sheet-header">
+            <h3>确认三视图</h3>
+            <button class="close-btn" @click="resetAndClose">✕</button>
+          </div>
+
+          <div class="confirm-tip">
+            点击图片查看 1:1 大图，满意后点击下一步
+          </div>
+
+          <!-- 三视图展示 -->
+          <div class="view-imgs-wrap">
+            <div
+              v-for="(url, i) in viewImageUrls" :key="i"
+              :class="['view-img-card', { selected: selectedViewUrl === url }]"
+              @click="selectAndPreview(url)"
+            >
+              <img :src="url" class="view-img" />
+              <div class="view-img-overlay">
+                <span class="view-img-zoom">🔍 点击查看大图</span>
+              </div>
+              <div v-if="selectedViewUrl === url" class="view-img-check">✓ 已选</div>
+            </div>
+          </div>
+
+          <div v-if="selectedStyleName" class="style-badge">
+            当前风格：{{ selectedStyleName }}
+          </div>
+
+          <button class="generate-btn" :disabled="!selectedViewUrl" @click="confirmAndStartScene">
+            下一步：生成场景图 →
+          </button>
+          <button class="btn-ghost" @click="uiStage = 'upload'">
+            ← 重新上传产品图
+          </button>
+        </template>
+
+        <!-- ══ 确认场景图 ══ -->
+        <template v-else-if="uiStage === 'confirm_scene'">
+          <div class="sheet-header">
+            <h3>确认场景图</h3>
+            <button class="close-btn" @click="resetAndClose">✕</button>
+          </div>
+
+          <div class="confirm-tip">
+            点击图片查看 1:1 大图，然后确认或修改视频提示词
+          </div>
+
+          <!-- 场景图 -->
+          <div class="scene-card" @click="openLightbox(sceneImageUrl)">
+            <img :src="sceneImageUrl" class="scene-img" />
+            <div class="scene-overlay">
+              <span class="view-img-zoom">🔍 点击查看大图</span>
+            </div>
+          </div>
+
+          <!-- 视频提示词编辑 -->
+          <div class="section-title">视频提示词（可修改）</div>
+          <textarea
+            v-model="videoPrompt"
+            class="prompt-textarea"
+            rows="4"
+            placeholder="描述视频效果，如：产品缓慢旋转展示，背景霓虹灯流光溢彩，镜头从特写慢慢拉远..."
+          ></textarea>
+
+          <div class="tip">确认场景图后，AI 按提示词生成 5s 营销视频</div>
+
+          <button class="generate-btn" @click="confirmAndStartVideo">
+            生成视频 →
+          </button>
         </template>
 
         <!-- ══ 完成 ══ -->
@@ -368,6 +527,26 @@ function resetAndClose() {
 </template>
 
 <style scoped>
+/* ── 灯箱 ─────────────────────────────────────────────────── */
+.lightbox {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0, 0, 0, .94);
+  display: flex; align-items: center; justify-content: center;
+}
+.lightbox-img {
+  max-width: 100vw; max-height: 100vh;
+  object-fit: contain;
+  border-radius: 4px;
+}
+.lightbox-close {
+  position: fixed; top: 16px; right: 20px; z-index: 10000;
+  background: rgba(255,255,255,.15); border: none;
+  color: #fff; font-size: 18px;
+  width: 36px; height: 36px; border-radius: 50%;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+
+/* ── 基础 ─────────────────────────────────────────────────── */
 .overlay {
   position: fixed; inset: 0;
   background: rgba(0,0,0,.65);
@@ -398,7 +577,7 @@ function resetAndClose() {
   cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
 
-/* 参考视频卡片 */
+/* ── 参考视频卡片 ─────────────────────────────────────────── */
 .source-card {
   display: flex; gap: 12px;
   background: rgba(255,255,255,.06); border-radius: 12px; padding: 10px;
@@ -421,12 +600,18 @@ function resetAndClose() {
   -webkit-line-clamp: 2; overflow: hidden;
 }
 
+/* ── 标题 & 提示 ─────────────────────────────────────────── */
 .section-title {
   font-size: 12px; font-weight: 700;
   color: rgba(255,255,255,.45); letter-spacing: 0.5px;
 }
+.confirm-tip {
+  font-size: 12px; color: rgba(255,255,255,.5);
+  background: rgba(126,207,255,.06); border: 1px solid rgba(126,207,255,.15);
+  border-radius: 8px; padding: 8px 12px;
+}
 
-/* 图片网格 */
+/* ── 图片网格（上传预览）────────────────────────────────── */
 .img-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .img-thumb {
   aspect-ratio: 3/4; border-radius: 10px;
@@ -452,36 +637,101 @@ function resetAndClose() {
 .img-add span:first-child { font-size: 28px; line-height: 1; }
 .img-add-sub { font-size: 11px; }
 
-/* 风格选择横滚 */
+/* ── 风格选择 ────────────────────────────────────────────── */
 .style-scroll {
   display: flex; gap: 8px; overflow-x: auto;
   padding-bottom: 4px; -webkit-overflow-scrolling: touch;
 }
 .style-scroll::-webkit-scrollbar { display: none; }
 .style-chip {
-  flex-shrink: 0;
-  padding: 7px 14px;
-  border-radius: 20px;
+  flex-shrink: 0; padding: 7px 14px; border-radius: 20px;
   font-size: 13px; font-weight: 600;
-  color: rgba(255,255,255,.5);
-  background: rgba(255,255,255,.07);
-  border: 1.5px solid transparent;
-  cursor: pointer; transition: all .15s;
+  color: rgba(255,255,255,.5); background: rgba(255,255,255,.07);
+  border: 1.5px solid transparent; cursor: pointer; transition: all .15s;
   white-space: nowrap;
 }
 .style-chip.active {
-  color: #FE2C55;
-  background: rgba(254,44,85,.1);
-  border-color: rgba(254,44,85,.4);
+  color: #FE2C55; background: rgba(254,44,85,.1); border-color: rgba(254,44,85,.4);
 }
 
+/* ── 三视图确认 ──────────────────────────────────────────── */
+.view-imgs-wrap { display: flex; flex-direction: column; gap: 10px; }
+.view-img-card {
+  position: relative; border-radius: 12px; overflow: hidden;
+  border: 2px solid rgba(255,255,255,.1); cursor: pointer;
+  transition: border-color .15s;
+}
+.view-img-card:hover { border-color: rgba(126,207,255,.5); }
+.view-img-card.selected { border-color: #22c55e; }
+.view-img {
+  width: 100%; display: block;
+  object-fit: cover; background: #111;
+  aspect-ratio: 9 / 16;
+  max-height: 360px;
+}
+.view-img-overlay {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,.0); transition: background .15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.view-img-card:hover .view-img-overlay { background: rgba(0,0,0,.35); }
+.view-img-zoom {
+  font-size: 13px; color: #fff; font-weight: 600;
+  opacity: 0; transition: opacity .15s;
+}
+.view-img-card:hover .view-img-zoom { opacity: 1; }
+.view-img-check {
+  position: absolute; top: 8px; right: 8px;
+  background: #22c55e; color: #fff;
+  font-size: 11px; font-weight: 700;
+  padding: 3px 9px; border-radius: 10px;
+}
+
+/* ── 风格徽章 ────────────────────────────────────────────── */
+.style-badge {
+  font-size: 12px; color: #a78bfa;
+  background: rgba(139,92,246,.1); border: 1px solid rgba(139,92,246,.2);
+  border-radius: 8px; padding: 6px 12px;
+}
+
+/* ── 场景图确认 ──────────────────────────────────────────── */
+.scene-card {
+  position: relative; border-radius: 12px; overflow: hidden;
+  cursor: pointer; border: 2px solid rgba(255,255,255,.1);
+  transition: border-color .15s;
+}
+.scene-card:hover { border-color: rgba(167,139,250,.5); }
+.scene-img {
+  width: 100%; display: block;
+  object-fit: cover; background: #111;
+  aspect-ratio: 9 / 16;
+  max-height: 360px;
+}
+.scene-overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.0); transition: background .15s;
+}
+.scene-card:hover .scene-overlay { background: rgba(0,0,0,.35); }
+.scene-card:hover .view-img-zoom  { opacity: 1; }
+
+/* ── 提示词编辑框 ────────────────────────────────────────── */
+.prompt-textarea {
+  width: 100%; background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.12);
+  color: #fff; border-radius: 10px;
+  padding: 12px; font-size: 13px; line-height: 1.6;
+  resize: vertical; font-family: inherit; min-height: 96px;
+  transition: border-color .15s;
+}
+.prompt-textarea:focus { outline: none; border-color: #a78bfa; }
+.prompt-textarea::placeholder { color: rgba(255,255,255,.25); }
+
+/* ── 通用按钮 ────────────────────────────────────────────── */
 .tip {
   font-size: 12px; color: rgba(255,255,255,.4);
-  background: rgba(255,255,255,.05);
-  border-radius: 8px; padding: 8px 12px;
+  background: rgba(255,255,255,.05); border-radius: 8px; padding: 8px 12px;
 }
-
-/* 生成按钮 */
 .generate-btn {
   width: 100%;
   background: linear-gradient(135deg, #FE2C55, #FF6B35);
@@ -492,8 +742,16 @@ function resetAndClose() {
   transition: opacity .15s;
 }
 .generate-btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-ghost {
+  width: 100%; background: transparent;
+  border: 1px solid rgba(255,255,255,.15); color: rgba(255,255,255,.5);
+  border-radius: 12px; padding: 12px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: all .15s;
+}
+.btn-ghost:hover { background: rgba(255,255,255,.06); color: rgba(255,255,255,.8); }
 
-/* 加载视图 */
+/* ── 加载视图 ────────────────────────────────────────────── */
 .loading-view {
   display: flex; flex-direction: column;
   align-items: center; gap: 16px; padding: 28px 0;
@@ -506,10 +764,7 @@ function resetAndClose() {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-title { font-size: 16px; font-weight: 700; color: #fff; }
-
-.progress-wrap {
-  width: 100%; display: flex; align-items: center; gap: 10px;
-}
+.progress-wrap { width: 100%; display: flex; align-items: center; gap: 10px; }
 .progress-track {
   flex: 1; height: 6px; background: rgba(255,255,255,.1);
   border-radius: 3px; overflow: hidden;
@@ -522,30 +777,21 @@ function resetAndClose() {
   font-size: 13px; font-weight: 700; color: #fff; min-width: 36px; text-align: right;
 }
 
-/* 步骤指示 */
-.step-track {
-  display: flex; align-items: center; gap: 0; width: 100%;
-}
-.step-item {
-  display: flex; flex-direction: column; align-items: center; gap: 5px;
-  flex-shrink: 0;
-}
+/* ── 步骤指示 ────────────────────────────────────────────── */
+.step-track { display: flex; align-items: center; gap: 0; width: 100%; }
+.step-item { display: flex; flex-direction: column; align-items: center; gap: 5px; flex-shrink: 0; }
 .step-dot {
   font-size: 18px; width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
 }
-.step-item.done  .step-dot { color: #4ade80; }
+.step-item.done   .step-dot { color: #4ade80; }
 .step-item.active .step-dot { color: #FE2C55; }
-.step-item.wait  .step-dot { color: rgba(255,255,255,.2); }
-.step-lbl {
-  font-size: 11px; white-space: nowrap;
-}
-.step-item.done  .step-lbl { color: #4ade80; }
+.step-item.wait   .step-dot { color: rgba(255,255,255,.2); }
+.step-lbl { font-size: 11px; white-space: nowrap; }
+.step-item.done   .step-lbl { color: #4ade80; }
 .step-item.active .step-lbl { color: #fff; font-weight: 700; }
-.step-item.wait  .step-lbl { color: rgba(255,255,255,.3); }
-.step-line {
-  flex: 1; height: 2px; background: rgba(255,255,255,.1); margin-bottom: 14px;
-}
+.step-item.wait   .step-lbl { color: rgba(255,255,255,.3); }
+.step-line { flex: 1; height: 2px; background: rgba(255,255,255,.1); margin-bottom: 14px; }
 .dot-pulse {
   display: inline-block;
   animation: pulse 1.2s ease-in-out infinite;
@@ -554,11 +800,9 @@ function resetAndClose() {
   0%, 100% { opacity: 1; transform: scale(1); }
   50%       { opacity: .5; transform: scale(.7); }
 }
-.loading-hint {
-  font-size: 11px; color: rgba(255,255,255,.3); text-align: center;
-}
+.loading-hint { font-size: 11px; color: rgba(255,255,255,.3); text-align: center; }
 
-/* 完成 */
+/* ── 完成页 ──────────────────────────────────────────────── */
 .result-video {
   width: 100%; border-radius: 14px; max-height: 240px; object-fit: cover; background: #000;
 }
@@ -567,11 +811,8 @@ function resetAndClose() {
   border-radius: 14px; display: flex; align-items: center; justify-content: center;
   color: rgba(255,255,255,.4); font-size: 14px;
 }
-
-/* 反馈 */
 .feedback-box {
-  background: rgba(255,255,255,.05);
-  border-radius: 12px; padding: 12px 14px;
+  background: rgba(255,255,255,.05); border-radius: 12px; padding: 12px 14px;
   display: flex; flex-direction: column; gap: 10px;
 }
 .fb-title { font-size: 13px; color: rgba(255,255,255,.7); font-weight: 600; }
@@ -581,15 +822,9 @@ function resetAndClose() {
   flex: 1; padding: 9px; border: none; border-radius: 10px;
   font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity .15s;
 }
-.fb-btn.good {
-  background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.3);
-}
-.fb-btn.bad {
-  background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.25);
-}
-.fb-reasons {
-  display: flex; flex-wrap: wrap; gap: 8px;
-}
+.fb-btn.good { background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.3); }
+.fb-btn.bad  { background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.25); }
+.fb-reasons  { display: flex; flex-wrap: wrap; gap: 8px; }
 .reason-btn {
   padding: 7px 14px; border: 1px solid rgba(255,255,255,.15);
   background: rgba(255,255,255,.06); color: rgba(255,255,255,.7);
@@ -597,18 +832,14 @@ function resetAndClose() {
 }
 .reason-btn:hover { background: rgba(254,44,85,.12); border-color: rgba(254,44,85,.4); color: #FE2C55; }
 .fb-done { font-size: 13px; color: rgba(255,255,255,.5); text-align: center; padding: 6px 0; }
-
 .done-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-
-/* 按钮 */
 .btn-secondary {
   flex: 1; background: rgba(255,255,255,.1); border: none;
   color: #fff; border-radius: 12px; padding: 13px;
   font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .btn-primary {
-  flex: 1;
-  background: linear-gradient(135deg, #FE2C55, #FF6B35);
+  flex: 1; background: linear-gradient(135deg, #FE2C55, #FF6B35);
   border: none; color: #fff; border-radius: 12px;
   padding: 13px; font-size: 13px; font-weight: 700; cursor: pointer;
   text-decoration: none; text-align: center;
@@ -616,7 +847,7 @@ function resetAndClose() {
 .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
 .qianchuan { background: linear-gradient(135deg, #06b6d4, #3b82f6); }
 
-/* 错误 */
+/* ── 错误页 ──────────────────────────────────────────────── */
 .error-view {
   display: flex; flex-direction: column;
   align-items: center; gap: 16px; padding: 32px 0;
@@ -624,7 +855,7 @@ function resetAndClose() {
 .error-icon { font-size: 48px; }
 .error-msg  { font-size: 14px; color: rgba(255,255,255,.7); text-align: center; line-height: 1.5; }
 
-/* Transition */
+/* ── Transition ──────────────────────────────────────────── */
 .sheet-enter-active, .sheet-leave-active { transition: transform .3s ease, opacity .3s; }
 .sheet-enter-from { transform: translateY(100%); opacity: 0; }
 .sheet-leave-to   { transform: translateY(100%); opacity: 0; }

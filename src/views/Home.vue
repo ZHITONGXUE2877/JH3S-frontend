@@ -1,6 +1,25 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useVideoStore } from '../stores/videoStore'
+import { useVideoStore, getSessionId, getDeviceType } from '../stores/videoStore'
+
+const API_BASE  = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const sessionId = getSessionId()
+const device    = getDeviceType()
+
+// 上报曝光/播放事件（视频成为当前视频时触发）
+function reportView(video) {
+  if (!video?.content_id) return
+  fetch(`${API_BASE}/v1/engagement/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      content_id:  video.content_id,
+      event_type:  'view',
+      session_id:  sessionId,
+      device_type: device,
+    }),
+  }).catch(() => {}) // 静默失败，不影响 UI
+}
 import CategoryNav  from '../components/CategoryNav.vue'
 import ActionSidebar from '../components/ActionSidebar.vue'
 import VideoInfo    from '../components/VideoInfo.vue'
@@ -81,12 +100,20 @@ function snapTo(targetY, afterCb) {
 function goNext() {
   if (animating.value) return
   if (store.currentIndex >= store.filteredVideos.length - 1) return
-  snapTo(-window.innerHeight, () => { store.nextVideo(); refreshSlots() })
+  snapTo(-window.innerHeight, () => {
+    store.nextVideo()
+    refreshSlots()
+    reportView(store.currentVideo)
+  })
 }
 function goPrev() {
   if (animating.value) return
   if (store.currentIndex <= 0) return
-  snapTo(window.innerHeight, () => { store.prevVideo(); refreshSlots() })
+  snapTo(window.innerHeight, () => {
+    store.prevVideo()
+    refreshSlots()
+    reportView(store.currentVideo)
+  })
 }
 
 // ─── Touch ─────────────────────────────────────────
@@ -148,6 +175,8 @@ watch(() => store.activeCategory, refreshSlots)
 onMounted(() => {
   refreshSlots()
   window.addEventListener('keydown', onKeydown)
+  // 上报首屏视频曝光
+  if (store.currentVideo) reportView(store.currentVideo)
 })
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
