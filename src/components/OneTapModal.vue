@@ -76,9 +76,11 @@ function stopPoll() { clearInterval(pollTimer); pollTimer = null }
 const viewImageUrls   = ref([])
 const selectedViewUrl = ref('')
 
-// ── Stage 2a 数据：场景图 ─────────────────────────────────────
-const sceneImageUrl = ref('')
-const videoPrompt   = ref('')   // 可由用户编辑，默认来自风格模板
+// ── Stage 2a 数据：场景图（预览帧选择）──────────────────────
+const scenePreviewUrls  = ref([])   // 最多 3 张预览帧
+const selectedFrameUrl  = ref('')   // 用户选中的帧
+const sceneImageUrl     = ref('')   // 兼容旧版单图
+const videoPrompt       = ref('')   // 可由用户编辑，默认来自风格模板
 
 // ── Stage 2b 数据：完成 ───────────────────────────────────────
 const resultVideoUrl = ref('')
@@ -163,6 +165,16 @@ async function pollFor(targetStatus) {
         if (data.default_video_prompt) videoPrompt.value = data.default_video_prompt
         uiStage.value = 'confirm_3view'
       } else if (targetStatus === 'SCENE_READY') {
+        // 优先使用新断点流程：3 张预览帧供用户选择
+        const previews = data.scene_preview_urls || []
+        if (previews.length) {
+          scenePreviewUrls.value = previews
+          selectedFrameUrl.value = previews[0]
+        } else {
+          // 兼容旧版：只有单图
+          scenePreviewUrls.value = data.scene_image_url ? [data.scene_image_url] : []
+          selectedFrameUrl.value = data.scene_image_url || ''
+        }
         sceneImageUrl.value = data.scene_image_url || ''
         if (data.default_video_prompt && !videoPrompt.value)
           videoPrompt.value = data.default_video_prompt
@@ -203,17 +215,18 @@ async function confirmAndStartScene() {
   }
 }
 
-// ── 确认场景图 + 视频提示词 → 启动视频生成 ───────────────────
+// ── 确认场景帧 → 启动视频生成（新断点流程）──────────────────
 async function confirmAndStartVideo() {
+  if (!selectedFrameUrl.value) return
   uiStage.value  = 'loading_video'
   progress.value = 0
   try {
-    const r = await fetch(`${API_BASE}/v1/task/start_video`, {
+    const r = await fetch(`${API_BASE}/v1/task/confirm_and_video`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
-        task_id:      taskId.value,
-        video_prompt: videoPrompt.value,
+        task_id:            taskId.value,
+        selected_frame_url: selectedFrameUrl.value,
       }),
     })
     if (!r.ok) {
@@ -270,8 +283,10 @@ function resetAndClose() {
   progress.value        = 0
   viewImageUrls.value   = []
   selectedViewUrl.value = ''
-  sceneImageUrl.value   = ''
-  videoPrompt.value     = ''
+  scenePreviewUrls.value  = []
+  selectedFrameUrl.value  = ''
+  sceneImageUrl.value     = ''
+  videoPrompt.value       = ''
   resultVideoUrl.value  = ''
   lightboxOpen.value    = false
   feedbackDone.value    = false
@@ -432,38 +447,45 @@ function resetAndClose() {
           </button>
         </template>
 
-        <!-- ══ 确认场景图 ══ -->
+        <!-- ══ 确认场景图（选帧）══ -->
         <template v-else-if="uiStage === 'confirm_scene'">
           <div class="sheet-header">
-            <h3>确认场景图</h3>
+            <h3>选择首帧</h3>
             <button class="close-btn" @click="resetAndClose">✕</button>
           </div>
 
           <div class="confirm-tip">
-            点击图片查看 1:1 大图，然后确认或修改视频提示词
+            {{ scenePreviewUrls.length > 1 ? '选一张作为视频首帧，点击图片查看大图' : '点击图片查看 1:1 大图，确认后生成视频' }}
           </div>
 
-          <!-- 场景图 -->
-          <div class="scene-card" @click="openLightbox(sceneImageUrl)">
-            <img :src="sceneImageUrl" class="scene-img" />
+          <!-- 多帧选择（≥2 张时竖列选，1 张时单图展示）-->
+          <div v-if="scenePreviewUrls.length > 1" class="view-imgs-wrap">
+            <div
+              v-for="(url, i) in scenePreviewUrls" :key="i"
+              :class="['view-img-card', { selected: selectedFrameUrl === url }]"
+              @click="selectedFrameUrl = url; openLightbox(url)"
+            >
+              <img :src="url" class="view-img" />
+              <div class="view-img-overlay">
+                <span class="view-img-zoom">🔍 点击查看大图</span>
+              </div>
+              <div v-if="selectedFrameUrl === url" class="view-img-check">✓ 已选</div>
+            </div>
+          </div>
+          <div v-else-if="scenePreviewUrls.length === 1" class="scene-card" @click="openLightbox(scenePreviewUrls[0])">
+            <img :src="scenePreviewUrls[0]" class="scene-img" />
             <div class="scene-overlay">
               <span class="view-img-zoom">🔍 点击查看大图</span>
             </div>
           </div>
 
-          <!-- 视频提示词编辑 -->
-          <div class="section-title">视频提示词（可修改）</div>
-          <textarea
-            v-model="videoPrompt"
-            class="prompt-textarea"
-            rows="4"
-            placeholder="描述视频效果，如：产品缓慢旋转展示，背景霓虹灯流光溢彩，镜头从特写慢慢拉远..."
-          ></textarea>
+          <div class="tip">确认首帧后，AI 按此风格生成 5s 营销视频</div>
 
-          <div class="tip">确认场景图后，AI 按提示词生成 5s 营销视频</div>
-
-          <button class="generate-btn" @click="confirmAndStartVideo">
+          <button class="generate-btn" :disabled="!selectedFrameUrl" @click="confirmAndStartVideo">
             生成视频 →
+          </button>
+          <button class="btn-ghost" @click="uiStage = 'confirm_3view'">
+            ← 返回重选产品图
           </button>
         </template>
 
