@@ -55,7 +55,7 @@ const CATEGORY_COLOR = {
 }
 
 // ── API 地址 ─────────────────────────────────────────────────────
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8001'
 
 // ── StyleTemplate → Video 对象映射 ──────────────────────────────
 function styleToVideo(s, index) {
@@ -110,20 +110,36 @@ export const useVideoStore = defineStore('video', () => {
   const allVideos      = ref([])
   const loading        = ref(false)
 
-  // ── 从后端拉取已发布视频 ──────────────────────────────────────
+  // ── 从后端拉取已发布视频 + lab 生成视频 ─────────────────────────
   async function fetchVideos() {
     loading.value = true
     try {
-      const res = await fetch(`${API_BASE}/v1/styles?published=true`)
-      if (!res.ok) throw new Error('API error')
-      const styles = await res.json()
-      // 过滤掉没有 demo_video_url 的
-      const valid = styles.filter(s => s.demo_video_url)
-      allVideos.value = valid.length > 0
-        ? valid.map((s, i) => styleToVideo(s, i))
-        : DEMO_VIDEOS
+      // 1. 已发布风格模板视频
+      const stylesRes = await fetch(`${API_BASE}/v1/styles?published=true`)
+      const styles    = stylesRes.ok ? await stylesRes.json() : []
+      const styleVids = styles.filter(s => s.demo_video_url).map((s, i) => styleToVideo(s, i))
+
+      // 2. lab node4 生成的视频
+      const labRes  = await fetch(`${API_BASE}/v1/lab/history?node=node4&limit=32`)
+      const labRaw  = labRes.ok ? await labRes.json() : []
+      const labItems = Array.isArray(labRaw) ? labRaw : (labRaw.items || [])
+      const labVids = labItems.map((item, i) => ({
+        id:         styleVids.length + i + 1,
+        content_id: item.task_id || `lab_${i}`,
+        category:   'lab',
+        videoUrl:   item.urls?.[0] || '',
+        gradient:   'linear-gradient(160deg,#f97316,#dc2626)',
+        account:    { name: 'Lab 生成', handle: '@lab', avatar: 'L', color: '#f97316', fans: '—' },
+        likes: 0, favorites: 0, shares: 0, profit: 0,
+        duration: 5,
+        title:    item.label || 'Lab 生成视频',
+        tags:     ['lab'],
+        music: '—', hookType: 'Lab', hookEmoji: '🎬', hookDesc: '', isHot: false,
+      })).filter(v => v.videoUrl)
+
+      const combined = [...styleVids, ...labVids]
+      allVideos.value = combined.length > 0 ? combined : DEMO_VIDEOS
     } catch {
-      // 网络失败 → 用演示视频
       allVideos.value = DEMO_VIDEOS
     } finally {
       loading.value = false
